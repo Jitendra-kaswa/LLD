@@ -2,16 +2,10 @@ package src
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 	"time"
-
-	"github.com/google/uuid"
 )
-
-func generateID() string {
-	id := uuid.New()
-	return id.String()
-}
 
 type BookingService interface {
 	AddCity(name string) (*City, error)
@@ -32,6 +26,9 @@ type bookingService struct {
 	showRepo        ShowRepository
 	seatRepo        SeatRepository
 	reservationRepo ReservationRepository
+	pricingStrategy PricingStrategy
+	idGenerator     IDGenerationStrategy
+	notifier        NotificationStrategy
 }
 
 func NewBookingService(
@@ -40,6 +37,9 @@ func NewBookingService(
 	showRepo ShowRepository,
 	seatRepo SeatRepository,
 	reservationRepo ReservationRepository,
+	pricingStrategy PricingStrategy,
+	idGenerator IDGenerationStrategy,
+	notifier NotificationStrategy,
 ) BookingService {
 	return &bookingService{
 		cityRepo:        cityRepo,
@@ -47,11 +47,14 @@ func NewBookingService(
 		showRepo:        showRepo,
 		seatRepo:        seatRepo,
 		reservationRepo: reservationRepo,
+		pricingStrategy: pricingStrategy,
+		idGenerator:     idGenerator,
+		notifier:        notifier,
 	}
 }
 
 func (s *bookingService) AddCity(name string) (*City, error) {
-	city := NewCity(generateID(), name)
+	city := NewCity(s.idGenerator.GenerateID(), name)
 	err := s.cityRepo.Add(city)
 	if err != nil {
 		return nil, err
@@ -60,7 +63,7 @@ func (s *bookingService) AddCity(name string) (*City, error) {
 }
 
 func (s *bookingService) AddTheater(name, cityID string) (*Theater, error) {
-	theater := NewTheater(generateID(), name, cityID)
+	theater := NewTheater(s.idGenerator.GenerateID(), name, cityID)
 	err := s.theaterRepo.Add(theater)
 	if err != nil {
 		return nil, err
@@ -69,7 +72,7 @@ func (s *bookingService) AddTheater(name, cityID string) (*Theater, error) {
 }
 
 func (s *bookingService) AddShow(movieName, theaterID string, startTime time.Time) (*Show, error) {
-	show := NewShow(generateID(), movieName, theaterID, startTime)
+	show := NewShow(s.idGenerator.GenerateID(), movieName, theaterID, startTime)
 	err := s.showRepo.Add(show)
 	if err != nil {
 		return nil, err
@@ -165,7 +168,7 @@ func (s *bookingService) ReserveSeats(showID string, seatIDs []string) (*Reserva
 		s.seatRepo.Update(seat)
 	}
 
-	reservation := NewReservation(generateID(), showID, seatIDs, time.Now().Add(5*time.Minute))
+	reservation := NewReservation(s.idGenerator.GenerateID(), showID, seatIDs, time.Now().Add(5*time.Minute))
 	err = s.reservationRepo.Add(reservation)
 	if err != nil {
 		return nil, err
@@ -192,14 +195,27 @@ func (s *bookingService) ConfirmBooking(reservationID string) (*Receipt, error) 
 		seat.Status = SeatBooked
 		s.seatRepo.Update(seat)
 	}
+	show, err := s.showRepo.Get(reservation.ShowID)
 
-	booking := NewBooking(generateID(), reservationID, float64(len(reservation.SeatIDs))*200.0)
+	seats := make([]*Seat, len(reservation.SeatIDs))
+	for i, seatID := range reservation.SeatIDs {
+		seats[i], _ = s.seatRepo.Get(seatID)
+	}
+	totalAmount := s.pricingStrategy.CalculatePrice(show, seats)
+
+	booking := NewBooking(s.idGenerator.GenerateID(), reservationID, totalAmount)
 
 	receipt := NewReceipt(booking.ID, reservation.ShowID, reservation.SeatIDs, booking.TotalAmount)
 
 	s.reservationRepo.Delete(reservationID)
+	s.SendBookingConfirmation(1, booking)
 
 	return receipt, nil
+}
+
+func (s *bookingService) SendBookingConfirmation(user int, booking *Booking) error {
+	message := fmt.Sprintf("Your booking %s has been confirmed.", booking.ID)
+	return s.notifier.SendNotification(user, message)
 }
 
 func (s *bookingService) releaseSeatsAfterExpiration(reservation *Reservation) {

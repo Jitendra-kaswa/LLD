@@ -13,8 +13,11 @@ func main() {
 	showRepo := src.NewInMemoryShowRepository()
 	seatRepo := src.NewInMemorySeatRepository()
 	reservationRepo := src.NewInMemoryReservationRepository()
+	pricingStrategy := src.NewDynamicPricingStrategy(200, 20)
+	idGenerationStrategy := src.NewUUIDGenerationStrategy()
+	notificationStrategy := src.NewEmailNotificationStrategy()
 
-	bookingService := src.NewBookingService(cityRepo, theaterRepo, showRepo, seatRepo, reservationRepo)
+	bookingService := src.NewBookingService(cityRepo, theaterRepo, showRepo, seatRepo, reservationRepo, pricingStrategy, idGenerationStrategy, notificationStrategy)
 
 	city, _ := bookingService.AddCity("New York")
 	theater, _ := bookingService.AddTheater("Cinema Paradise", city.ID)
